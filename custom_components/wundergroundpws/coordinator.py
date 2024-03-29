@@ -22,6 +22,7 @@ from homeassistant.const import (
 from .const import (
     ICON_CONDITION_MAP,
     FIELD_OBSERVATIONS,
+    FIELD_FORECAST_ICONCODE,
     FIELD_CONDITION_HUMIDITY,
     FIELD_CONDITION_WINDDIR,
     FIELD_DAYPART,
@@ -39,6 +40,8 @@ _RESOURCESHARED = '&format=json&apiKey={apiKey}&units={units}'
 _RESOURCECURRENT = ('https://api.weather.com/v2/pws/observations/current'
                     '?stationId={stationId}')
 _RESOURCEFORECAST = ('https://api.weather.com/v3/wx/forecast/daily/5day'
+                     '?geocode={latitude},{longitude}')
+_RESOURCECONDITION = ('https://api.weather.com/v3/wx/observations/current'
                      '?geocode={latitude},{longitude}')
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=5)
@@ -136,6 +139,16 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
                     self._latitude = (result_current[FIELD_OBSERVATIONS][0][FIELD_LATITUDE])
 
             with async_timeout.timeout(DEFAULT_TIMEOUT):
+                url = self._build_url(_RESOURCECONDITION)
+                response = await self._session.get(url, headers=headers)
+                result_cond = await response.json()
+                if result_cond is None:
+                    raise ValueError('NO CURRENT RESULT')
+                self._check_errors(url, result_cond)
+
+                result_current[FIELD_OBSERVATIONS][0][FIELD_FORECAST_ICONCODE] = result_cond[FIELD_FORECAST_ICONCODE]
+
+            with async_timeout.timeout(DEFAULT_TIMEOUT):
                 url = self._build_url(_RESOURCEFORECAST)
                 response = await self._session.get(url, headers=headers)
                 result_forecast = await response.json()
@@ -160,7 +173,7 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
         if baseurl == _RESOURCECURRENT:
             if self._numeric_precision != 'none':
                 baseurl += '&numericPrecision={numericPrecision}'
-        elif baseurl == _RESOURCEFORECAST:
+        elif baseurl in [_RESOURCEFORECAST, _RESOURCECONDITION]:
             baseurl += '&language={language}'
 
         baseurl += _RESOURCESHARED
@@ -196,6 +209,7 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
         if field in [
             FIELD_CONDITION_HUMIDITY,
             FIELD_CONDITION_WINDDIR,
+            FIELD_FORECAST_ICONCODE,
         ]:
             # Those fields are unit-less
             return self.data[FIELD_OBSERVATIONS][0][field] or 0

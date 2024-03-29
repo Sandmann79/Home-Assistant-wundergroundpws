@@ -160,9 +160,8 @@ class WUWeather(CoordinatorEntity, WeatherEntity):
     @property
     def condition(self) -> str:
         """Return the current condition."""
-        day = self.coordinator.get_forecast(FIELD_FORECAST_ICONCODE)
-        night = self.coordinator.get_forecast(FIELD_FORECAST_ICONCODE, 1)
-        return self.coordinator._iconcode_to_condition(day or night)
+        cond = self.coordinator.get_condition(FIELD_FORECAST_ICONCODE)
+        return self.coordinator._iconcode_to_condition(cond)
 
 
     def _forecast(self) -> list[Forecast]:
