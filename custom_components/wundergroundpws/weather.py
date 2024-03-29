@@ -16,6 +16,9 @@ from .const import (
     SPEEDUNIT,
     PRESSUREUNIT,
 
+    FIELD_HOURLY,
+    FIELD_DAILY,
+
     FIELD_CONDITION_HUMIDITY,
     FIELD_CONDITION_PRESSURE,
     FIELD_CONDITION_TEMP,
@@ -25,6 +28,7 @@ from .const import (
     FIELD_FORECAST_VALIDTIMEUTC,
     FIELD_FORECAST_PRECIPCHANCE,
     FIELD_FORECAST_QPF,
+    FIELD_FORECAST_TEMPERATURE,
     FIELD_FORECAST_TEMPERATUREMAX,
     FIELD_FORECAST_TEMPERATUREMIN,
     FIELD_FORECAST_CALENDARDAYTEMPERATUREMAX,
@@ -88,7 +92,8 @@ class WUWeather(CoordinatorEntity, WeatherEntity):
     def supported_features(self) -> int | None:
         """Flag supported features."""
         # return WeatherEntityFeature.FORECAST_HOURLY if self.coordinator.config.hourly_forecast else WeatherEntityFeature.FORECAST_DAILY
-        return WeatherEntityFeature.FORECAST_DAILY
+        return ( WeatherEntityFeature.FORECAST_DAILY
+                 | WeatherEntityFeature.FORECAST_HOURLY )
 
     @property
     def native_temperature(self) -> float:
@@ -164,50 +169,60 @@ class WUWeather(CoordinatorEntity, WeatherEntity):
         return self.coordinator._iconcode_to_condition(cond)
 
 
-    def _forecast(self) -> list[Forecast]:
+    def _forecast(self, fctype) -> list[Forecast]:
         """Return the forecast in native units."""
-        days = [0, 2, 4, 6, 8]
-        if self.coordinator.get_forecast('temperature', 0) is None:
-            days[0] += 1
-        if self.coordinator._calendarday is True:
-            caldaytempmax = FIELD_FORECAST_CALENDARDAYTEMPERATUREMAX
-            caldaytempmin = FIELD_FORECAST_CALENDARDAYTEMPERATUREMIN
+        if fctype == FIELD_DAILY:
+            seq = [0, 2, 4, 6, 8]
+            if self.coordinator.get_forecast(fctype, 'temperature', 0) is None:
+                seq[0] += 1
+            if self.coordinator._calendarday is True:
+                caldaytempmax = FIELD_FORECAST_CALENDARDAYTEMPERATUREMAX
+                caldaytempmin = FIELD_FORECAST_CALENDARDAYTEMPERATUREMIN
+            else:
+                caldaytempmax = FIELD_FORECAST_TEMPERATUREMAX
+                caldaytempmin = None
         else:
-            caldaytempmax = FIELD_FORECAST_TEMPERATUREMAX
-            caldaytempmin = FIELD_FORECAST_TEMPERATUREMIN
+            seq = range(24)
+            caldaytempmax = FIELD_FORECAST_TEMPERATURE
 
         forecast = []
-        for period in days:
-            forecast.append(Forecast({
+        for period in seq:
+            fc_dict = {
                 ATTR_FORECAST_CONDITION:
                     self.coordinator._iconcode_to_condition(
-                        self.coordinator.get_forecast(
+                        self.coordinator.get_forecast(fctype,
                             FIELD_FORECAST_ICONCODE, period)
                     ),
                 ATTR_FORECAST_PRECIPITATION:
-                    self.coordinator.get_forecast(FIELD_FORECAST_QPF, period),
+                    self.coordinator.get_forecast(fctype, FIELD_FORECAST_QPF, period),
                 ATTR_FORECAST_PRECIPITATION_PROBABILITY:
-                    self.coordinator.get_forecast(FIELD_FORECAST_PRECIPCHANCE, period),
+                    self.coordinator.get_forecast(fctype,
+                        FIELD_FORECAST_PRECIPCHANCE, period),
 
                 ATTR_FORECAST_TEMP:
-                    self.coordinator.get_forecast(caldaytempmax, period),
-                ATTR_FORECAST_TEMP_LOW:
-                    self.coordinator.get_forecast(
-                        caldaytempmin, period),
+                    self.coordinator.get_forecast(fctype, caldaytempmax, period),
 
                 ATTR_FORECAST_TIME:
-                    dt_util.utc_from_timestamp(self.coordinator.get_forecast(
+                    dt_util.utc_from_timestamp(self.coordinator.get_forecast(fctype,
                         FIELD_FORECAST_VALIDTIMEUTC, period)).isoformat(),
 
                 ATTR_FORECAST_WIND_BEARING:
-                    self.coordinator.get_forecast(
+                    self.coordinator.get_forecast(fctype,
                         FIELD_FORECAST_WINDDIRECTIONCARDINAL, period),
-                ATTR_FORECAST_WIND_SPEED: self.coordinator.get_forecast(
+                ATTR_FORECAST_WIND_SPEED: self.coordinator.get_forecast(fctype,
                     FIELD_FORECAST_WINDSPEED, period)
-            }))
+            }
+            if fctype == FIELD_DAILY:
+                fc_dict[ATTR_FORECAST_TEMP_LOW] = self.coordinator.get_forecast(
+                    fctype, caldaytempmin, period)
+            forecast.append(Forecast(fc_dict))
         # _LOGGER.debug(f'{forecast=}')
         return forecast
 
     async def async_forecast_daily(self) -> list[Forecast] | None:
         """Return the daily forecast in native units."""
-        return self._forecast()
+        return self._forecast(FIELD_DAILY)
+
+    async def async_forecast_hourly(self) -> list[Forecast] | None:
+        """Return the daily forecast in native units."""
+        return self._forecast(FIELD_HOURLY)

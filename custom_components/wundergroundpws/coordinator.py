@@ -25,7 +25,9 @@ from .const import (
     FIELD_FORECAST_ICONCODE,
     FIELD_CONDITION_HUMIDITY,
     FIELD_CONDITION_WINDDIR,
+    FIELD_DAILY,
     FIELD_DAYPART,
+    FIELD_HOURLY,
     FIELD_FORECAST_VALIDTIMEUTC,
     FIELD_FORECAST_TEMPERATUREMAX,
     FIELD_FORECAST_TEMPERATUREMIN,
@@ -39,7 +41,9 @@ _LOGGER = logging.getLogger(__name__)
 _RESOURCESHARED = '&format=json&apiKey={apiKey}&units={units}'
 _RESOURCECURRENT = ('https://api.weather.com/v2/pws/observations/current'
                     '?stationId={stationId}')
-_RESOURCEFORECAST = ('https://api.weather.com/v3/wx/forecast/daily/5day'
+_RESOURCEFORECAST_DAILY = ('https://api.weather.com/v3/wx/forecast/daily/5day'
+                     '?geocode={latitude},{longitude}')
+_RESOURCEFORECAST_HOURLY = ('https://api.weather.com/v3/wx/forecast/hourly/1day'
                      '?geocode={latitude},{longitude}')
 _RESOURCECONDITION = ('https://api.weather.com/v3/wx/observations/current'
                      '?geocode={latitude},{longitude}')
@@ -143,21 +147,30 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
                 response = await self._session.get(url, headers=headers)
                 result_cond = await response.json()
                 if result_cond is None:
-                    raise ValueError('NO CURRENT RESULT')
+                    raise ValueError('NO CURRENT CONDITION RESULT')
                 self._check_errors(url, result_cond)
 
                 result_current[FIELD_OBSERVATIONS][0][FIELD_FORECAST_ICONCODE] = result_cond[FIELD_FORECAST_ICONCODE]
 
             with async_timeout.timeout(DEFAULT_TIMEOUT):
-                url = self._build_url(_RESOURCEFORECAST)
+                url = self._build_url(_RESOURCEFORECAST_DAILY)
                 response = await self._session.get(url, headers=headers)
-                result_forecast = await response.json()
+                result_forecast_d = await response.json()
 
-                if result_forecast is None:
-                    raise ValueError('NO FORECAST RESULT')
-                self._check_errors(url, result_forecast)
+                if result_forecast_d is None:
+                    raise ValueError('NO DAILY FORECAST RESULT')
+                self._check_errors(url, result_forecast_d)
 
-            result = {**result_current, **result_forecast}
+            with async_timeout.timeout(DEFAULT_TIMEOUT):
+                url = self._build_url(_RESOURCEFORECAST_HOURLY)
+                response = await self._session.get(url, headers=headers)
+                result_forecast_h = await response.json()
+
+                if result_forecast_h is None:
+                    raise ValueError('NO HOURLY FORECAST RESULT')
+                self._check_errors(url, result_forecast_h)
+
+            result = {**result_current, FIELD_DAILY: result_forecast_d, FIELD_HOURLY: result_forecast_h}
 
             self.data = result
 
@@ -173,7 +186,7 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
         if baseurl == _RESOURCECURRENT:
             if self._numeric_precision != 'none':
                 baseurl += '&numericPrecision={numericPrecision}'
-        elif baseurl in [_RESOURCEFORECAST, _RESOURCECONDITION]:
+        else:
             baseurl += '&language={language}'
 
         baseurl += _RESOURCESHARED
@@ -215,8 +228,11 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
             return self.data[FIELD_OBSERVATIONS][0][field] or 0
         return self.data[FIELD_OBSERVATIONS][0][self.unit_system][field]
 
-    def get_forecast(self, field, period=0):
+    def get_forecast(self, fctype, field, period=0):
+        fcdata = self.data[fctype]
         try:
+            if fctype == FIELD_HOURLY:
+                return fcdata[field][period]
             if field in [
                 FIELD_FORECAST_TEMPERATUREMAX,
                 FIELD_FORECAST_TEMPERATUREMIN,
@@ -225,8 +241,9 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
                 FIELD_FORECAST_VALIDTIMEUTC,
             ]:
                 # Those fields exist per-day, rather than per dayPart, so the period is halved
-                return self.data[field][int(period / 2)]
-            return self.data[FIELD_DAYPART][0][field][period]
+                return fcdata[field][int(period / 2)]
+
+            return fcdata[FIELD_DAYPART][0][field][period]
         except IndexError:
             return None
 
